@@ -1,0 +1,71 @@
+// almi-billing-router — registry + audit tables. The LIVE source of truth is these Neon rows,
+// added via the bearer-auth admin route (never hardcoded product lists). Normalized on purpose:
+// forwardSecret lives on Product (one per product), so a product's monthly+yearly price rows can
+// never drift to different secrets — BillingRoute only maps priceId → productId.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL") //          pooled (pgbouncer=true) at runtime
+  directUrl = env("DATABASE_URL_UNPOOLED") // direct for migrations
+}
+
+// One AlmiWorld product = one forwarding target + one shared HMAC secret.
+model Product {
+  id            String         @id //           stable slug, e.g. "almicelpip" (matches checkout metadata.product)
+  name          String //                        display name, e.g. "AlmiCELPIP"
+  forwardUrl    String //                        the product's real webhook: https://<product>.almiworld.com/api/webhooks/stripe
+  forwardSecret String //                        per-product HMAC secret; equals that product's ROUTER_WEBHOOK_SECRET env
+  active        Boolean        @default(true)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  routes        BillingRoute[]
+}
+
+// The routing key. One row per Stripe price id (a product may own several: monthly, yearly, …).
+model BillingRoute {
+  priceId   String   @id //                      Stripe price id — the unique routing key for subscription/invoice events
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@index([productId])
+}
+
+// Idempotency + audit for everything that DID route. eventId is the Stripe event id, so Stripe
+// retries (and any concurrent re-delivery) never double-forward. Only a 2xx from the product marks
+// FORWARDED; a failure stays FAILED so Stripe's retry (we return 5xx) re-drives it.
+model RoutedEvent {
+  eventId     String    @id //                   Stripe event id
+  productId   String?
+  priceId     String?
+  status      String //                          FORWARDED | FAILED
+  attempts    Int       @default(0)
+  lastError   String?
+  forwardedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([status])
+}
+
+// Fail-safe log: an event we verified from Stripe but could NOT route (unknown priceId, or a
+// checkout.session.completed whose metadata.product is missing/unknown). Never dropped — acked to
+// Stripe (200) and parked here for the founder's weekly eyeball. Must stay empty in steady state.
+model UnroutedEvent {
+  id         String   @id @default(cuid())
+  eventId    String //                           Stripe event id
+  type       String //                           Stripe event type
+  priceId    String? //                          extracted price id, if any
+  productTag String? //                          checkout metadata.product, if present but unknown
+  reason     String //                           why it could not be routed
+  snippet    String //                           truncated payload for triage
+  receivedAt DateTime @default(now())
+  resolved   Boolean  @default(false)
+
+  @@index([resolved])
+  @@index([eventId])
+}

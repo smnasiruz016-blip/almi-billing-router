@@ -1,0 +1,27 @@
+{
+  "name": "almi-billing-router",
+  "version": "0.1.0",
+  "private": true,
+  "description": "One Stripe event destination for the whole AlmiWorld network — verifies Stripe signatures, routes each event to the owning product's webhook by price id (or checkout metadata.product), forwards with a per-product HMAC. Registry-driven (Neon), fail-safe (unknown events logged, never dropped).",
+  "scripts": {
+    "dev": "next dev",
+    "build": "prisma generate && next build",
+    "start": "next start",
+    "db:deploy": "prisma migrate deploy",
+    "db:generate": "prisma generate",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.2.0",
+    "next": "^16.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "stripe": "^17.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "prisma": "^6.2.0",
+    "typescript": "^5.7.0"
+  }
+}
